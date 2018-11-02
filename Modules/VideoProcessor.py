@@ -9,6 +9,8 @@ from PIL import Image
 from sklearn.cluster import DBSCAN
 from sklearn.neighbors import radius_neighbors_graph
 from sklearn.neighbors import NearestNeighbors
+from collections import Counter
+from imageio import imread
 #from pathos.multiprocessing import ProcessingPool as ThreadPool
 np.warnings.filterwarnings('ignore')
 
@@ -187,7 +189,83 @@ class VideoProcessor:
             shutil.rmtree(self.tempDirectory)
         print('Took ' + str((datetime.datetime.now() - start).seconds/60) + ' convert HMMs', file = sys.stderr)
 
-    def clusterHMM(self, minMagnitude = 10, treeR = 22, leafNum = 190, neighborR = 22, timeScale = 10, eps = 18, minPts = 170):
+
+    def filterHMM(self, minMagnitude = 10, nlargest = 1, timepoint = None, threshold = None, mask = None, plot = False, write = True):
+        # minMagnitude: integer. HMM changes with a smaller magnitude will be removed. 
+        # nlargest: integer. Timepoints will be sorted by the number of HMM changes, HMM changes at the largest n timepoints will be removed.  
+        # timepoint: a list of integer. HMM changes at the n-th second will be removed.
+        # threshold: integer. If at anytimpoint, the number of HMM changes exceeds n, then all HMM change at this timepoint will be removed. 
+        # mask: path to a tank mask image. HMM changes within the 'True' region of the mask will be removed
+        # 
+        # Plot: generate a pdf file of HMM statistics
+
+        if os.path.isfile(self.clusterDirectory + 'RawCoords.npy'):
+            self.coords = np.load(self.clusterDirectory + 'RawCoords.npy')
+        else:
+            self.coords = self.obj.retDBScanMatrix()
+            np.save(self.clusterDirectory + 'RawCoords.npy', self.coords)
+
+        rawCount = self.coords.shape[0]
+        print('HMM change count: '+ str(rawCount))
+
+        if minMagnitude:           
+            rowsDelete = np.where([self.coords[:,3] < minMagnitude])
+            print('Filtered on minMagnitude. Total removed:' + str(rowsDelete[0].shape))
+
+        if nlargest:
+            count = Counter()
+            timeDelete = count.most_common(n)
+            rowsDelete = np.concatenate((rowsDelete, np.where(self.coords[:,0] == timeDelete)))
+            print('Filtered on nlargest. Total removed:' + str(rowsDelete[0].shape))
+
+        if timepoint:
+            for t in n:
+                rowsDelete = np.concatenate((rowsDelete, np.where(self.coords[:,0] == t)))
+            print('Filtered on timepoint. Total removed:' + str(rowsDelete[0].shape))
+
+        if threshold:
+            rowsDelete = np.concatenate((rowsDelete, np.where(self.coords[:,0] >= n)))
+            print('Filtered on threshold. Total removed:' + str(rowsDelete[0].shape))
+
+        if mask:
+            maskImg = imread(mask)
+            rowsDelete = np.concatenate((rowsDelete, np.where(self.coords[:,1:3] = np.argwhere(maskImg))))
+
+           
+        filteredCoords = np.delete(filteredCoords,np.unique(rowsDelete),0)
+        deleteCount = rowsDelete[0].shape
+        print('Total removed hmm changes: ' + str(deleteCount))
+
+        if plot:
+            self.hmmStat(filteredCoords)
+
+        if write:
+            self.coords = filteredCoords
+            np.save('FilteredCoords.npy', filteredCoords)
+
+
+    def hmmStat(self, coords = None):
+
+        if not coord:
+            coords = self.coords
+            
+        fig, axs = plt.subplots(2, 2, figsize=(15, 30), facecolor='w', edgecolor='k')
+        fig.subplots_adjust(hspace = 0.2, wspace=.001)
+        axs = axs.ravel()
+        
+        axs[0].hist(coords[:,0], bins = np.arange(np.min(self.coords[:,0]),np.max(self.coords[:,0])+1,1800))
+        axs[0].set_title('timepoint of hmm changes')
+
+        axs[1].hist(coords[:,1], bins = self.height)
+        axs[1]..set_title('y coordinates of hmm changes')    
+        
+        axs[2].hist(coords[:,2], bins = self.width)
+        axs[2].set_title('x coordinates of hmm changes') 
+
+        fig.savefig(self.clusterDirectory + 'HMMStat.pdf', bbox_inches='tight')
+
+
+    def clusterHMM(self, treeR = 22, leafNum = 190, neighborR = 22, timeScale = 10, eps = 18, minPts = 170):
         
         if os.path.exists(self.clusterDirectory + 'Labels.npy') and not self.rewrite:
             print('Cluster label file already exists. Will not recalculate it unless rewrite flag is True')
@@ -199,23 +277,119 @@ class VideoProcessor:
             self.obj = HMMdata(filename = self.hmmFile)
 
         print('Identifying raw coordinate positions for cluster analysis', file = sys.stderr)
-        if os.path.isfile(self.clusterDirectory + 'RawCoords.npy'):
-            self.coords = np.load(self.clusterDirectory + 'RawCoords.npy')
+        if os.path.isfile(self.clusterDirectory + 'FilteredCoords.npy'):
+            self.coords = np.load(self.clusterDirectory + 'FilteredCoords.npy')
         else:
-            self.coords = self.obj.retDBScanMatrix(minMagnitude)
-            np.save(self.clusterDirectory + 'RawCoords.npy', self.coords)
+            #self.coords = self.obj.retDBScanMatrix(minMagnitude)
+            #np.save(self.clusterDirectory + 'FilteredCoords.npy', self.coords)
+            print('filter HMM first')
+            return 
             
         print('Calculating nearest neighbors and pairwise distances between clusters', file = sys.stderr)
         if os.path.isfile(self.clusterDirectory + 'PairwiseDistances.npz'):
             dist = np.load(self.clusterDirectory + 'PairwiseDistances.npz')
         else:
-            self.coords[:,0] = self.coords[:,0]*timeScale
+            self.coords[:,0] = self.coords[:,0].astype(np.float64) * timeScale 
             X = NearestNeighbors(radius=treeR, metric='minkowski', p=2, algorithm='kd_tree',leaf_size=leafNum,n_jobs=24).fit(self.coords)
             dist = X.radius_neighbors_graph(self.coords, neighborR, 'distance')
             scipy.sparse.save_npz(self.clusterDirectory + 'PairwiseDistances.npz', dist)
             
-        label = DBSCAN(eps=eps, min_samples=minPts, metric='precomputed', n_jobs=24).fit_predict(dist)
-        np.save(self.clusterDirectory + 'Labels.npy', label)
+        self.labels = DBSCAN(eps=eps, min_samples=minPts, metric='precomputed', n_jobs=24).fit_predict(dist)
+
+        np.save(self.clusterDirectory + 'Labels.npy', self.labels)
+
+        # calculate center z, y, x, number points for each cluster
+        clusterDataFile = self.clusterDirectory + 'ClusterCenters.npy'
+        if os.path.isfile(clusterDataFile):
+            self.clusterData = np.load(clusterDataFile)
+        else:
+            uniqueLabel = set(label[label!=-1])
+            self.clusterData = np.zeros([len(uniqueLabel),7])  # clusterData z,y,x, max z,y,x, min z,y,x
+            for l in uniqueLabel:
+                currCluster = coord[label==l,:]
+                self.clusterData[l,0:3] = np.mean(currCluster[:,0:3],axis=0)  # center coordinate of cluster
+                self.clusterData[l,3] = currCluster.shape[0]  # sand change count
+                self.clusterData[l,4] = np.max(currCluster[:,0]) - np.min(currCluster[:,0])
+                self.clusterData[l,5] = np.max(currCluster[:,1]) - np.min(currCluster[:,1])  # span of y coordinates
+                self.clusterData[l,6] = np.max(currCluster[:,2]) - np.min(currCluster[:,2]) 
+
+        np.save(clusterDataFile, self.clusterData)
+
+
+    def clusterStat(self, interval = 7200):
+        try:
+            self.clusterData
+        except AttributeError:
+            self.clusterData = np.load('ClusterCenters')
+
+        numPlot = (np.max(self.clusterData[:,0]) - np.min(self.clusterData[:,0])) / float(interval) +1   
+        rowNum = int(np.ceil(numPlot/2))
+
+        fig, axs = plt.subplots(rowNum, 2, figsize=(15, 30), facecolor='w', edgecolor='k')
+        fig.subplots_adjust(hspace = 0.2, wspace=.001)
+        axs = axs.ravel()
+        
+        # histogram of timepoint of cluster centers
+        axs[0].hist(self.clusterData[:,0], bins=np.arange(np.min(self.clusterData[:,0]),np.max(self.clusterData[:,0])+1,1800))
+        axs[0].set_title('timepoint of cluster centers')       
+
+        i = 1
+
+        for startTime in range(np.min(self.clusterData[:,0]),np.max(self.clusterData[:,0]),interval):
+         
+            endTime = min(startTime + interval, np.max(coord[:,0]))
+            points = self.clusterData[self.clusterData[:,0] >= startTime,:]
+            points = points[points[:,0] < endTime,:]
+            
+            axs[i].scatter(points[:,2],points[:,1],s=20)
+
+            axs[i].ylim([972,0])
+            axs[i].xlim([0,1296])
+
+            axs[i].set_title(str(startTime)+ 's to' + str(endTime) + 's')
+
+            i+=1
+
+        fig.savefig(self.clusterDirectory + 'ClusterStat.pdf', bbox_inches='tight')
+
+
+    def createClusterClipsToAnnotate(self, n = 100, length = 6, size = 400):
+        # n: number of clips
+        # size: height of window
+        
+        rgbVideo = cv2.VideoCapture(self.videofile)
+
+        for l in range(0,n):
+            z = self.clusterData[i,0]
+            out = cv2.VideoWriter(self.clusterDirectory + str(l) + '.mp4', 0x00000021, 25, (size*2,size))
+
+            hmmStartZ = z - _int(length/2)
+            hmmEndZ = z + _int(length/2)
+            rgbVideo.set(cv2.CAP_PROP_POS_FRAMES,hmmStartZ * self.frame_rate)
+
+            for hmmZ in range(hmmStartZ,hmmEndZ+1):
+                hmmFrame = _create_hmm_frame(hmmZ,i,self.coords,self.labels)
+                hmmFrame = _mark_rectangle(hmmFrame,self.clusterData[l],l,(0,175,255))
+                # make a marker when time is the center time of cluster
+                hmmFrame = _mark_center(hmmFrame,hmmZ,self.clusterData[l])
+
+                hmmFrame,centerCoord = _fill_frame_edge(hmmFrame,self.clusterData[l],size)
+                subhmmFrame = _cut_frame(hmmFrame, centerCoord[1],centerCoord[2],size,size)
+
+                # go to the rgb video timpepoint
+                for t in range(0,hmmFrameblock):
+                    ret, rgbFrame = rgbVideo.read()
+                    rgbFrame = _mark_rectangle(rgbFrame,clusterCenter[l],l,(0,175,255))
+                    rgbFrame = _mark_center(rgbFrame,hmmZ,clusterCenter[l])
+
+                    # mirror replicate the edges to prevent out of boundaries
+                    rgbFrame,centerCoord = _fill_frame_edge(rgbFrame,clusterCenter[l],size)
+                    subrgbFrame = _cut_frame(rgbFrame, centerCoord[1],centerCoord[2],size,size)
+                    outFrame = np.concatenate((subhmmFrame,subrgbFrame),axis=1)
+                    out.write(outFrame)
+
+            out.release()
+
         
     def createFramesToAnnotate(self, n = 300):
         rerun = False
@@ -335,3 +509,53 @@ class VideoProcessor:
         #       now = datetime.datetime.now()
         #        print(str(now) + ': ' + outtext, file = self.anLF)
         print(outtext, file = sys.stderr)
+
+
+    def _int(n):
+        return np.round(n).astype(int)
+
+    def _fill_frame_edge(frame,coord,padSize):
+        padFrame = np.stack([np.pad(frame[:,:,c], (padSize,), mode='constant',constant_values= 0) for c in range(3)], axis=2)
+        # adjust coord after edge padding 
+        ajustCoord = coord.copy()
+        ajustCoord[1:3] = coord[1:3] + padSize
+
+        return padFrame,ajustCoord
+
+    def _mark_rectangle(frame,box,label,markColor):
+        cv2.rectangle(frame,(box[8],box[7]),(box[5],box[4]),markColor,2)
+        changeCount = box[9]
+        # put change count on the box
+        font                   = cv2.FONT_HERSHEY_SIMPLEX
+        bottomLeftCornerOfText = (box[8],box[7])
+        fontScale              = 1
+        fontColor              = markColor
+        lineType               = 2
+
+        #cv2.putText(frame, str(changeCount), bottomLeftCornerOfText, font, fontScale,fontColor,lineType)
+        cv2.putText(frame, str(label), bottomLeftCornerOfText, font, fontScale,fontColor,lineType)
+
+        return frame
+
+    def _mark_center(frame, t, centerCoord):
+        if t == centerCoord[0]:
+            cv2.drawMarker(frame,(centerCoord[2],centerCoord[1]),(114,0,225),cv2.MARKER_TRIANGLE_UP,8,2,8)
+        return frame     
+
+    def _cut_frame(frame,centerY,centerX,height,width):
+        return frame[_int(centerY)-_int(height/2):_int(centerY)+_int(height/2),_int(centerX)-_int(width/2):_int(centerX)+_int(width/2),:]
+
+    def _create_hmm_frame(self,z,currLabel):
+        # only one cluster is colored, others are white
+        hmmFrame = np.uint8(np.zeros([self.height,self.width,3]))
+        currClusterCoord = self.coords[self.labels == currLabel,:]
+        # all other hmm points on this frame
+        if np.any(self.coords[:,0]==z):
+            [y,x] = self.coords[self.coords[:,0]==z,1:3].T
+            hmmFrame[y,x,:] = [255,255,255]
+        # current cluster on this frame
+        if np.any(currClusterCoord[:,0]==z):
+            [y,x] = currClusterCoord[currClusterCoord[:,0]==z,1:3].T
+            hmmFrame[y,x,:] = [0,175,255]
+
+        return hmmFrame
