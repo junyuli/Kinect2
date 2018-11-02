@@ -10,7 +10,6 @@ from sklearn.cluster import DBSCAN
 from sklearn.neighbors import radius_neighbors_graph
 from sklearn.neighbors import NearestNeighbors
 from collections import Counter
-from imageio import imread
 #from pathos.multiprocessing import ProcessingPool as ThreadPool
 np.warnings.filterwarnings('ignore')
 
@@ -190,7 +189,7 @@ class VideoProcessor:
         print('Took ' + str((datetime.datetime.now() - start).seconds/60) + ' convert HMMs', file = sys.stderr)
 
 
-    def filterHMM(self, minMagnitude = 10, nlargest = 1, timepoint = None, threshold = None, mask = None, plot = False, write = True):
+    def filterHMM(self, minMagnitude = 10, nlargest = 1, timepoint = None, threshold = None, mask = None, plot = True, write = False):
         # minMagnitude: integer. HMM changes with a smaller magnitude will be removed. 
         # nlargest: integer. Timepoints will be sorted by the number of HMM changes, HMM changes at the largest n timepoints will be removed.  
         # timepoint: a list of integer. HMM changes at the n-th second will be removed.
@@ -202,6 +201,11 @@ class VideoProcessor:
         if os.path.isfile(self.clusterDirectory + 'RawCoords.npy'):
             self.coords = np.load(self.clusterDirectory + 'RawCoords.npy')
         else:
+            try:
+                self.obj
+            except AttributeError:
+                self.obj = HMMdata(filename = self.hmmFile)
+            
             self.coords = self.obj.retDBScanMatrix()
             np.save(self.clusterDirectory + 'RawCoords.npy', self.coords)
 
@@ -209,31 +213,31 @@ class VideoProcessor:
         print('HMM change count: '+ str(rawCount))
 
         if minMagnitude:           
-            rowsDelete = np.where([self.coords[:,3] < minMagnitude])
-            print('Filtered on minMagnitude. Total removed:' + str(rowsDelete[0].shape))
+            rowsDelete = np.where(self.coords[:,3] < minMagnitude)[0]
+            print('Filtered on minMagnitude. Total removed:' + str(rowsDelete.shape[0]))
 
         if nlargest:
             count = Counter()
-            timeDelete = count.most_common(n)
-            rowsDelete = np.concatenate((rowsDelete, np.where(self.coords[:,0] == timeDelete)))
-            print('Filtered on nlargest. Total removed:' + str(rowsDelete[0].shape))
+            timeDelete = count.most_common(nlargest)
+            rowsDelete = np.concatenate((rowsDelete, np.where(self.coords[:,0] == timeDelete)[0]))
+            print('Filtered on nlargest. Total removed:' + str(rowsDelete.shape[0]))
 
         if timepoint:
-            for t in n:
-                rowsDelete = np.concatenate((rowsDelete, np.where(self.coords[:,0] == t)))
-            print('Filtered on timepoint. Total removed:' + str(rowsDelete[0].shape))
+            for t in timepoint:
+                rowsDelete = np.concatenate((rowsDelete, np.where(self.coords[:,0] == t)[0]))
+            print('Filtered on timepoint. Total removed:' + str(rowsDelete.shape[0]))
 
         if threshold:
-            rowsDelete = np.concatenate((rowsDelete, np.where(self.coords[:,0] >= n)))
-            print('Filtered on threshold. Total removed:' + str(rowsDelete[0].shape))
+            rowsDelete = np.concatenate((rowsDelete, np.where(self.coords[:,0] >= threshold)[0]))
+            print('Filtered on threshold. Total removed:' + str(rowsDelete.shape[0]))
 
         if mask:
-            maskImg = imread(mask)
-            rowsDelete = np.concatenate((rowsDelete, np.where(self.coords[:,1:3] = np.argwhere(maskImg))))
+            maskImg = Image.open(mask)
+            rowsDelete = np.concatenate((rowsDelete, np.where(self.coords[:,1:3] == np.argwhere(maskImg))))
 
            
-        filteredCoords = np.delete(filteredCoords,np.unique(rowsDelete),0)
-        deleteCount = rowsDelete[0].shape
+        filteredCoords = np.delete(self.coords,np.unique(rowsDelete),0)
+        deleteCount = rowsDelete.shape[0]
         print('Total removed hmm changes: ' + str(deleteCount))
 
         if plot:
@@ -246,23 +250,23 @@ class VideoProcessor:
 
     def hmmStat(self, coords = None):
 
-        if not coord:
+        if not np.any(coords):
             coords = self.coords
             
-        fig, axs = plt.subplots(2, 2, figsize=(15, 30), facecolor='w', edgecolor='k')
+        fig, axs = plt.subplots(2, 2, figsize=(10, 8), facecolor='w', edgecolor='k')
         fig.subplots_adjust(hspace = 0.2, wspace=.001)
         axs = axs.ravel()
         
-        axs[0].hist(coords[:,0], bins = np.arange(np.min(self.coords[:,0]),np.max(self.coords[:,0])+1,1800))
+        axs[0].hist(coords[:,0], bins = np.arange(np.min(coords[:,0]),np.max(coords[:,0])+1,1800))
         axs[0].set_title('timepoint of hmm changes')
 
-        axs[1].hist(coords[:,1], bins = self.height)
-        axs[1]..set_title('y coordinates of hmm changes')    
+        axs[1].hist(coords[:,1], bins = np.unique(coords[:,1]))
+        axs[1].set_title('y coordinate of hmm changes')    
         
-        axs[2].hist(coords[:,2], bins = self.width)
-        axs[2].set_title('x coordinates of hmm changes') 
+        axs[2].hist(coords[:,2], bins = np.unique(coords[:,2]))
+        axs[2].set_title('x coordinate of hmm changes') 
 
-        fig.savefig(self.clusterDirectory + 'HMMStat.pdf', bbox_inches='tight')
+        fig.savefig(self.clusterDirectory + 'HMMStat_'+ str(datetime.datetime.now())+'.pdf', bbox_inches='tight')
 
 
     def clusterHMM(self, treeR = 22, leafNum = 190, neighborR = 22, timeScale = 10, eps = 18, minPts = 170):
@@ -559,3 +563,4 @@ class VideoProcessor:
             hmmFrame[y,x,:] = [0,175,255]
 
         return hmmFrame
+
