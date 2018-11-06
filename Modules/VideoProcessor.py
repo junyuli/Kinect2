@@ -189,7 +189,8 @@ class VideoProcessor:
         print('Took ' + str((datetime.datetime.now() - start).seconds/60) + ' convert HMMs', file = sys.stderr)
 
 
-    def filterHMM(self, minMagnitude = 10, nlargest = 1, timepoint = None, threshold = None, mask = None, plot = True, write = False):
+    @classmethod
+    def filterHMM(cls, minMagnitude = 10, nlargest = 1, timepoint = None, threshold = None, mask = None, plot = True, write = False):
         # minMagnitude: integer. HMM changes with a smaller magnitude will be removed. 
         # nlargest: integer. Timepoints will be sorted by the number of HMM changes, HMM changes at the largest n timepoints will be removed.  
         # timepoint: a list of integer. HMM changes at the n-th second will be removed.
@@ -247,8 +248,8 @@ class VideoProcessor:
             self.coords = filteredCoords
             np.save('FilteredCoords.npy', filteredCoords)
 
-
-    def hmmStat(self, coords = None):
+    @classmethod
+    def hmmStat(cls, coords = None):
 
         if not np.any(coords):
             coords = self.coords
@@ -320,7 +321,8 @@ class VideoProcessor:
         np.save(clusterDataFile, self.clusterData)
 
 
-    def clusterStat(self, interval = 7200):
+    @classmethod
+    def clusterStat(cls, interval = 7200):
         try:
             self.clusterData
         except AttributeError:
@@ -357,7 +359,8 @@ class VideoProcessor:
         fig.savefig(self.clusterDirectory + 'ClusterStat.pdf', bbox_inches='tight')
 
 
-    def createClusterClipsToAnnotate(self, n = 100, length = 6, size = 400):
+    @classmethod
+    def createClusterClipsToAnnotate(cls, n = 100, length = 6, size = 400):
         # n: number of clips
         # size: height of window
         
@@ -394,7 +397,7 @@ class VideoProcessor:
 
             out.release()
 
-        
+    
     def createFramesToAnnotate(self, n = 300):
         rerun = False
         for i in range(n):
