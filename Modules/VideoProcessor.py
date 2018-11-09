@@ -10,6 +10,7 @@ from sklearn.cluster import DBSCAN
 from sklearn.neighbors import radius_neighbors_graph
 from sklearn.neighbors import NearestNeighbors
 from collections import Counter
+import glob 
 #from pathos.multiprocessing import ProcessingPool as ThreadPool
 np.warnings.filterwarnings('ignore')
 
@@ -100,6 +101,36 @@ class VideoProcessor:
         cap.close()
   
         
+    @classmethod
+    def plotBrightnessOverTime(cls, window=60):
+
+        video = cv2.VideoCapture(cls.videofile)
+        os.makedirs(cls.outDirectory + 'meanBright/', exist_ok=True)
+        window = window * cls.frame_rate
+        frameN = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
+        windowBright = []
+
+        while video.get(cv2.CAP_PROP_POS_FRAMES) < frameN:
+            startFrame = video.get(cv2.CAP_PROP_POS_FRAMES)
+            frameBright = np.zeros(window)
+            for fi in range(0,window):
+                if video.get(cv2.CAP_PROP_POS_FRAMES) >= frameN:
+                    break
+                ret, frame = video.read()
+                frameBright[fi] = np.mean([frame.flatten()])
+
+            np.save(cls.outDirectory + 'MeanBright/startFrame_' + str(startFrame) + '_mean_brightness.npy',frameBright)
+            print('saved '+ cls.outDirectory + 'MeanBright/startFrame_' +str(startFrame) + '_mean_brightness.npy')
+
+            windowBright.append(np.mean(frameBright))
+
+        video.release()
+        np.save(cls.outDirectory + 'MeanBrightPer' + str(window) + 's.npy',windowBright)
+        plt.figure()
+        plt.plot(windowBright)
+        plt.savefig(cls.outDirectory + 'MeanBrightPer' + str(window) + 's.pdf', bbox_inches='tight')
+
+
     def calculateHMM(self, blocksize = 5*60, delete = True):
         """
         This functon decompresses video into smaller chunks of data formated in the numpy array format.
@@ -199,60 +230,60 @@ class VideoProcessor:
         # 
         # Plot: generate a pdf file of HMM statistics
 
-        if os.path.isfile(self.clusterDirectory + 'RawCoords.npy'):
-            self.coords = np.load(self.clusterDirectory + 'RawCoords.npy')
+        if os.path.isfile(cls.clusterDirectory + 'RawCoords.npy'):
+            cls.coords = np.load(cls.clusterDirectory + 'RawCoords.npy')
         else:
             try:
-                self.obj
+                cls.obj
             except AttributeError:
-                self.obj = HMMdata(filename = self.hmmFile)
+                cls.obj = HMMdata(filename = cls.hmmFile)
             
-            self.coords = self.obj.retDBScanMatrix()
-            np.save(self.clusterDirectory + 'RawCoords.npy', self.coords)
+            cls.coords = cls.obj.retDBScanMatrix()
+            np.save(cls.clusterDirectory + 'RawCoords.npy', cls.coords)
 
-        rawCount = self.coords.shape[0]
+        rawCount = cls.coords.shape[0]
         print('HMM change count: '+ str(rawCount))
 
         if minMagnitude:           
-            rowsDelete = np.where(self.coords[:,3] < minMagnitude)[0]
+            rowsDelete = np.where(cls.coords[:,3] < minMagnitude)[0]
             print('Filtered on minMagnitude. Total removed:' + str(rowsDelete.shape[0]))
 
         if nlargest:
             count = Counter()
             timeDelete = count.most_common(nlargest)
-            rowsDelete = np.concatenate((rowsDelete, np.where(self.coords[:,0] == timeDelete)[0]))
+            rowsDelete = np.concatenate((rowsDelete, np.where(cls.coords[:,0] == timeDelete)[0]))
             print('Filtered on nlargest. Total removed:' + str(rowsDelete.shape[0]))
 
         if timepoint:
             for t in timepoint:
-                rowsDelete = np.concatenate((rowsDelete, np.where(self.coords[:,0] == t)[0]))
+                rowsDelete = np.concatenate((rowsDelete, np.where(cls.coords[:,0] == t)[0]))
             print('Filtered on timepoint. Total removed:' + str(rowsDelete.shape[0]))
 
         if threshold:
-            rowsDelete = np.concatenate((rowsDelete, np.where(self.coords[:,0] >= threshold)[0]))
+            rowsDelete = np.concatenate((rowsDelete, np.where(cls.coords[:,0] >= threshold)[0]))
             print('Filtered on threshold. Total removed:' + str(rowsDelete.shape[0]))
 
         if mask:
             maskImg = Image.open(mask)
-            rowsDelete = np.concatenate((rowsDelete, np.where(self.coords[:,1:3] == np.argwhere(maskImg))))
+            rowsDelete = np.concatenate((rowsDelete, np.where(cls.coords[:,1:3] == np.argwhere(maskImg))))
 
            
-        filteredCoords = np.delete(self.coords,np.unique(rowsDelete),0)
+        filteredCoords = np.delete(cls.coords,np.unique(rowsDelete),0)
         deleteCount = rowsDelete.shape[0]
         print('Total removed hmm changes: ' + str(deleteCount))
 
         if plot:
-            self.hmmStat(filteredCoords)
+            cls.hmmStat(filteredCoords)
 
         if write:
-            self.coords = filteredCoords
+            cls.coords = filteredCoords
             np.save('FilteredCoords.npy', filteredCoords)
 
     @classmethod
     def hmmStat(cls, coords = None):
 
         if not np.any(coords):
-            coords = self.coords
+            coords = cls.coords
             
         fig, axs = plt.subplots(2, 2, figsize=(10, 8), facecolor='w', edgecolor='k')
         fig.subplots_adjust(hspace = 0.2, wspace=.001)
@@ -267,12 +298,12 @@ class VideoProcessor:
         axs[2].hist(coords[:,2], bins = np.unique(coords[:,2]))
         axs[2].set_title('x coordinate of hmm changes') 
 
-        fig.savefig(self.clusterDirectory + 'HMMStat_'+ str(datetime.datetime.now())+'.pdf', bbox_inches='tight')
+        fig.savefig(cls.clusterDirectory + 'HMMStat_'+ str(datetime.datetime.now())+'.pdf', bbox_inches='tight')
 
 
     def clusterHMM(self, treeR = 22, leafNum = 190, neighborR = 22, timeScale = 10, eps = 18, minPts = 170):
         
-        if os.path.exists(self.clusterDirectory + 'Labels.npy') and not self.rewrite:
+        if os.path.exists(self.clusterDirectory + 'Labels.npy') and not cls.rewrite:
             print('Cluster label file already exists. Will not recalculate it unless rewrite flag is True')
             return
 
@@ -324,11 +355,11 @@ class VideoProcessor:
     @classmethod
     def clusterStat(cls, interval = 7200):
         try:
-            self.clusterData
+            cls.clusterData
         except AttributeError:
-            self.clusterData = np.load('ClusterCenters')
+            cls.clusterData = np.load('ClusterCenters')
 
-        numPlot = (np.max(self.clusterData[:,0]) - np.min(self.clusterData[:,0])) / float(interval) +1   
+        numPlot = (np.max(cls.clusterData[:,0]) - np.min(cls.clusterData[:,0])) / float(interval) +1   
         rowNum = int(np.ceil(numPlot/2))
 
         fig, axs = plt.subplots(rowNum, 2, figsize=(15, 30), facecolor='w', edgecolor='k')
@@ -336,15 +367,15 @@ class VideoProcessor:
         axs = axs.ravel()
         
         # histogram of timepoint of cluster centers
-        axs[0].hist(self.clusterData[:,0], bins=np.arange(np.min(self.clusterData[:,0]),np.max(self.clusterData[:,0])+1,1800))
+        axs[0].hist(cls.clusterData[:,0], bins=np.arange(np.min(cls.clusterData[:,0]),np.max(cls.clusterData[:,0])+1,1800))
         axs[0].set_title('timepoint of cluster centers')       
 
         i = 1
 
-        for startTime in range(np.min(self.clusterData[:,0]),np.max(self.clusterData[:,0]),interval):
+        for startTime in range(np.min(cls.clusterData[:,0]),np.max(cls.clusterData[:,0]),interval):
          
             endTime = min(startTime + interval, np.max(coord[:,0]))
-            points = self.clusterData[self.clusterData[:,0] >= startTime,:]
+            points = cls.clusterData[cls.clusterData[:,0] >= startTime,:]
             points = points[points[:,0] < endTime,:]
             
             axs[i].scatter(points[:,2],points[:,1],s=20)
@@ -356,7 +387,7 @@ class VideoProcessor:
 
             i+=1
 
-        fig.savefig(self.clusterDirectory + 'ClusterStat.pdf', bbox_inches='tight')
+        fig.savefig(cls.clusterDirectory + 'ClusterStat.pdf', bbox_inches='tight')
 
 
     @classmethod
@@ -364,23 +395,24 @@ class VideoProcessor:
         # n: number of clips
         # size: height of window
         
-        rgbVideo = cv2.VideoCapture(self.videofile)
+        rgbVideo = cv2.VideoCapture(cls.videofile)
+        os.makedirs(cls.clusterDirectory + 'ClusterClipsToAnnotate/', exist_ok=True)
 
         for l in range(0,n):
-            z = self.clusterData[i,0]
-            out = cv2.VideoWriter(self.clusterDirectory + str(l) + '.mp4', 0x00000021, 25, (size*2,size))
+            z = cls.clusterData[i,0]
+            out = cv2.VideoWriter(cls.clusterDirectory + 'ClusterClipsToAnnotate/' + str(l) + '.mp4', 0x00000021, 25, (size*2,size))
 
             hmmStartZ = z - _int(length/2)
             hmmEndZ = z + _int(length/2)
-            rgbVideo.set(cv2.CAP_PROP_POS_FRAMES,hmmStartZ * self.frame_rate)
+            rgbVideo.set(cv2.CAP_PROP_POS_FRAMES,hmmStartZ * cls.frame_rate)
 
             for hmmZ in range(hmmStartZ,hmmEndZ+1):
-                hmmFrame = _create_hmm_frame(hmmZ,i,self.coords,self.labels)
-                hmmFrame = _mark_rectangle(hmmFrame,self.clusterData[l],l,(0,175,255))
+                hmmFrame = _create_hmm_frame(hmmZ,i,cls.coords,cls.labels)
+                hmmFrame = _mark_rectangle(hmmFrame,cls.clusterData[l],l,(0,175,255))
                 # make a marker when time is the center time of cluster
-                hmmFrame = _mark_center(hmmFrame,hmmZ,self.clusterData[l])
+                hmmFrame = _mark_center(hmmFrame,hmmZ,cls.clusterData[l])
 
-                hmmFrame,centerCoord = _fill_frame_edge(hmmFrame,self.clusterData[l],size)
+                hmmFrame,centerCoord = _fill_frame_edge(hmmFrame,cls.clusterData[l],size)
                 subhmmFrame = _cut_frame(hmmFrame, centerCoord[1],centerCoord[2],size,size)
 
                 # go to the rgb video timpepoint
@@ -397,7 +429,7 @@ class VideoProcessor:
 
             out.release()
 
-    
+        
     def createFramesToAnnotate(self, n = 300):
         rerun = False
         for i in range(n):
@@ -567,3 +599,6 @@ class VideoProcessor:
 
         return hmmFrame
 
+
+
+print(" ")
