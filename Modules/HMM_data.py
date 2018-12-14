@@ -60,7 +60,7 @@ class HMMdata:
                         self.frameblock = value
         self.data_shape = (self.height, self.width)
 
-    def retDBScanMatrix(self, minMagnitude):
+    def retDBScanMatrix(self):
         row = 0
         column = -1
         allCoords = np.zeros(shape = (int(self.data.shape[0] - self.width*self.height), 4), dtype = 'uint16')

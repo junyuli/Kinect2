@@ -15,6 +15,7 @@ import Modules.LogParser as LP
 import subprocess
 from Modules.VideoProcessor import VideoProcessor
 from Modules.roipoly import roipoly
+import pdb
 
 class DataAnalyzer:
     def __init__(self, projectID, remote, locDir, cloudDir, rewriteFlag = False):
@@ -88,8 +89,9 @@ class DataAnalyzer:
 
     def __del__(self):
         # Remove local files once object is destroyed
-        shutil.rmtree(self.locMasterDir)
-        print('Deleting')
+     #   shutil.rmtree(self.locMasterDir)
+     #   print('Deleting')
+        print('not deleting')
         pass
 
     def __enter__(self):
@@ -135,21 +137,22 @@ class DataAnalyzer:
             vos = self.lp.movies
         else:
             vos = [self.lp.movies[index-1]]
-        for vo in vos:
-
+        for vo in vos: 
             baseName = vo.mp4_file.split('/')[-1].split('.')[0]
             subprocess.call(['rclone', 'copy', self.remote + ':' + self.remAnalysisDir + baseName, self.locAnalysisDir + baseName], stderr = self.fnull)
             self.vp_obj = VideoProcessor(self.locMasterDir + vo.mp4_file, self.locAnalysisDir + baseName, self.remote + ':' + self.remMasterDir + vo.movieDir)
             self.vp_obj.calculateHMM()
             self.vp_obj.createFramesToAnnotate()
             if clusterFlag:
+                self.vp_obj.filterHMM(mask= self.locAnalysisDir+'TankMask.tif', nlargest=1,write=True)
                 self.vp_obj.clusterHMM()
+                self.vp_obj.clusterStat(interval=1)
             subprocess.call(['rclone', 'copy', self.locAnalysisDir + baseName, self.remote + ':' + self.remAnalysisDir + baseName], stderr = self.fnull)
-            if os.path.isfile(self.locMasterDir + vo.mp4_file):
-                os.remove(self.locMasterDir + vo.mp4_file)
-            if os.path.isfile(self.locMasterDir + vo.h264_file):
-                os.remove(self.locMasterDir + vo.h264_file)
-            shutil.rmtree(self.locAnalysisDir + baseName)
+         #   if os.path.isfile(self.locMasterDir + vo.mp4_file):
+         #       os.remove(self.locMasterDir + vo.mp4_file)
+         #   if os.path.isfile(self.locMasterDir + vo.h264_file):
+         #       os.remove(self.locMasterDir + vo.h264_file)
+         #   shutil.rmtree(self.locAnalysisDir + baseName)
 
 
     def _identifyTray(self):

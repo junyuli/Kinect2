@@ -1,9 +1,11 @@
 from Modules.DataAnalyzer import DataAnalyzer as DA
 import argparse, os, pickle
 import pandas as pd
+import pdb 
+pdb.set_trace()
 
 rcloneName = 'cichlidVideo'
-dBoxMasterDir = 'McGrath/Apps/CichlidPiData/'
+dBoxMasterDir = 'BioSci-McGrath/Apps/CichlidPiData/'
 locMasterDir = os.getenv('HOME') + '/Temp/CichlidAnalyzer/'
 
 parser = argparse.ArgumentParser()
@@ -63,7 +65,8 @@ if args.Videos:
                 da_obj.processVideo(args.Cluster)
 
             else:
-                for index in videos[projectID]:
+                #for index in videos[projectID]:
+                for index in [7]:  #JL
                     da_obj.processVideo(args.Cluster, index)
 
 if args.Histogram:

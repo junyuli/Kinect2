@@ -8,3 +8,4 @@ remVideoDirectory = 'dropb:BioSci-McGrath/Apps/CichlidPiData/MC9_1/Videos/'
 
 obj = VideoProcessor(videofile, outDirectory, remVideoDirectory)
 obj.filterHMM(plot=True)
+obj.
