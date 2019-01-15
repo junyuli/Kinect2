@@ -11,6 +11,7 @@ from sklearn.cluster import DBSCAN
 from sklearn.neighbors import radius_neighbors_graph
 from sklearn.neighbors import NearestNeighbors
 from collections import Counter
+import cv2
 import glob 
 #from pathos.multiprocessing import ProcessingPool as ThreadPool
 np.warnings.filterwarnings('ignore')
@@ -64,31 +65,30 @@ class VideoProcessor:
     def downloadVideo(self):
         videoName = self.videofile.split('/')[-1]
         localDirectory = self.videofile.replace(videoName,'')
-        if os.path.isfile(self.videofile):
-            return
-        self._print(self.videofile + ' not present in local path. Trying to find it remotely')
-        subprocess.call(['rclone', 'copy', self.remVideoDirectory + videoName, localDirectory], stderr = self.fnull)                
         if not os.path.isfile(self.videofile):
-            self._print(self.videofile + ' not present in remote path. Trying to find h264 file and convert it to mp4')
-            if not os.path.isfile(self.videofile.replace('.mp4', '.h264')):
-                subprocess.call(['rclone', 'copy', self.remVideoDirectory + videoName.replace('.mp4', '.h264'), localDirectory], stderr = self.fnull)
-            if not os.path.isfile(self.videofile.replace('.mp4', '.h264')):
-                self._print('Unable to find ' + self.remVideoDirectory + videoName.replace('.mp4', '.h264'))
-                raise Exception
-            
-            subprocess.call(['ffmpeg', '-i', self.videofile.replace('.mp4', '.h264'), '-c:v', 'copy', self.videofile])
-                
-            if os.stat(self.videofile).st_size >= os.stat(self.videofile.replace('.mp4', '.h264')).st_size:
-                try:
-                    vid = pims.Video(self.videofile)
-                    vid.close()
-                    os.remove(self.videofile.replace('.mp4', '.h264'))
-                except Exception as e:
-                    self._print(e)
-                    self._print('Unable to convert ' + self.videofile)
+            self._print(self.videofile + ' not present in local path. Trying to find it remotely')
+            subprocess.call(['rclone', 'copy', self.remVideoDirectory + videoName, localDirectory], stderr = self.fnull)                
+            if not os.path.isfile(self.videofile):
+                self._print(self.videofile + ' not present in remote path. Trying to find h264 file and convert it to mp4')
+                if not os.path.isfile(self.videofile.replace('.mp4', '.h264')):
+                    subprocess.call(['rclone', 'copy', self.remVideoDirectory + videoName.replace('.mp4', '.h264'), localDirectory], stderr = self.fnull)
+                if not os.path.isfile(self.videofile.replace('.mp4', '.h264')):
+                    self._print('Unable to find ' + self.remVideoDirectory + videoName.replace('.mp4', '.h264'))
                     raise Exception
-                subprocess.call(['rclone', 'copy', self.videofile, self.remVideoDirectory], stderr = self.fnull)
-            self._print(self.videofile + ' converted and uploaded to ' + self.remVideoDirectory)
+            
+                subprocess.call(['ffmpeg', '-i', self.videofile.replace('.mp4', '.h264'), '-c:v', 'copy', self.videofile])
+                
+                if os.stat(self.videofile).st_size >= os.stat(self.videofile.replace('.mp4', '.h264')).st_size:
+                    try:
+                        vid = pims.Video(self.videofile)
+                        vid.close()
+                        os.remove(self.videofile.replace('.mp4', '.h264'))
+                    except Exception as e:
+                        self._print(e)
+                        self._print('Unable to convert ' + self.videofile)
+                        raise Exception
+                    subprocess.call(['rclone', 'copy', self.videofile, self.remVideoDirectory], stderr = self.fnull)
+                self._print(self.videofile + ' converted and uploaded to ' + self.remVideoDirectory)
 
         #Grab info on video
         cap = pims.Video(self.videofile)
@@ -101,7 +101,7 @@ class VideoProcessor:
             self.frames = min(int(cap.duration*cap.frame_rate), 12*60*60*self.frame_rate)
         cap.close()
  
-    @profile
+    #@profile
     def plotBrightnessOverTime(self, window=60):
        
         video = cv2.VideoCapture(videofile)
@@ -130,7 +130,7 @@ class VideoProcessor:
         plt.plot(windowBright)
         plt.savefig(self.outDirectory + 'MeanBrightPer' + str(window) + 's.pdf', bbox_inches='tight')
 
-    @profile
+    #@profile
     def calculateHMM(self, blocksize = 5*60, delete = True):
         """
         This functon decompresses video into smaller chunks of data formated in the numpy array format.
@@ -268,12 +268,15 @@ class VideoProcessor:
         filteredCoords = np.delete(self.coords,np.unique(rowsDelete),0)
 
         # tank is the non-zero(white) part of mask
+        # this option needs to be fixed
         if mask:
+            pdb.set_trace()
             maskImg = np.array(Image.open(mask))
             img = np.zeros([972,1296])
             img[filteredCoords[:,1],filteredCoords[:,2]] = True
             img = np.logical_and(img,~maskImg)
-            filteredCoords = np.where(img==True)[0]
+            # coords[:,2] needs to be included somehow too
+            filteredCoords = np.array([np.where(img==True)[0],np.where(img==True)[1]]).T
             print('After masking, remain count: '+str(filteredCoords.shape[0]))
 
         if plot:
@@ -307,7 +310,7 @@ class VideoProcessor:
 
         fig.savefig(coordsFile.replace('.npy', '_HMMStat.pdf'), bbox_inches='tight')
 
-    @profile
+    #@profile
     def clusterHMM(self, treeR = 22, leafNum = 190, neighborR = 22, timeScale = 10, eps = 18, minPts = 170):
 
         if os.path.exists(self.clusterDirectory + 'Labels.npy') and not self.rewrite:
@@ -335,7 +338,8 @@ class VideoProcessor:
             if os.path.isfile(self.clusterDirectory + 'PairwiseDistances.npz'):
                 dist = np.load(self.clusterDirectory + 'PairwiseDistances.npz')
             else:
-                self.coords[:,0] = self.coords[:,0].astype(np.float64) * timeScale 
+                assert self.coords.dtype == 'uint64' or self.coords.dtype == 'float64'
+                self.coords[:,0] = self.coords[:,0] * timeScale 
                 if os.path.isfile(self.clusterDirectory + 'NearestNeighborTree'):
                     X = pickle.load(open(self.clusterDirectory + 'NearestNeighborTree.pkl', 'rb'))
                 else:
@@ -421,12 +425,14 @@ class VideoProcessor:
         # size: height of window
        
         # check if cluster results exist, and construct object from clusterHMM
-    
+   
+        #pdb.set_trace()
         if glob.glob(self.clusterDirectory + 'ClusterClipsToAnnotate/*') and not self.rewrite:
             print('Clips already exist. Will not redo unless rewrite flag is True')
         if not os.path.exists(self.clusterDirectory + 'Labels.npy') or not os.path.exists(self.clusterDirectory + 'ClusterCenters.npy'):
             print('run clusterHMM first')
-        
+
+        self.downloadVideo()
         self.coords = np.load(self.clusterDirectory + 'FilteredCoords.npy')
         self.labels = np.load(self.clusterDirectory + 'Labels.npy')
         self.clusterData = np.load(self.clusterDirectory + 'ClusterCenters.npy')
@@ -434,32 +440,37 @@ class VideoProcessor:
         rgbVideo = cv2.VideoCapture(self.videofile)
         os.makedirs(self.clusterDirectory + 'ClusterClipsToAnnotate/', exist_ok=True)
 
+        try:
+            self.obj
+        except AttributeError:
+            self.obj = HMMdata(filename = self.hmmFile)
+
         for l in range(0,n):
-            z = self.clusterData[i,0]
+            z = self.clusterData[l,0]
             out = cv2.VideoWriter(self.clusterDirectory + 'ClusterClipsToAnnotate/' + str(l) + '.mp4', 0x00000021, 25, (size*2,size))
 
-            hmmStartZ = z - self._int(length/2)
-            hmmEndZ = z + self._int(length/2)
+            hmmStartZ = self._int(z - length/2)
+            hmmEndZ = self._int(z + length/2)
             rgbVideo.set(cv2.CAP_PROP_POS_FRAMES,hmmStartZ * self.frame_rate)
 
             for hmmZ in range(hmmStartZ,hmmEndZ+1):
-                hmmFrame = _create_hmm_frame(hmmZ,i,self.coords,self.labels)
-                hmmFrame = _mark_rectangle(hmmFrame,self.clusterData[l],l,(0,175,255))
+                hmmFrame = self._create_hmm_frame(hmmZ,l)
+                hmmFrame = self._mark_rectangle(hmmFrame,l)
                 # make a marker when time is the center time of cluster
-                hmmFrame = _mark_center(hmmFrame,hmmZ,self.clusterData[l])
+                hmmFrame = self._mark_center(hmmFrame,hmmZ,self.clusterData[l])
 
-                hmmFrame,centerCoord = _fill_frame_edge(hmmFrame,self.clusterData[l],size)
-                subhmmFrame = _cut_frame(hmmFrame, centerCoord[1],centerCoord[2],size,size)
-
+                # mirror replicate the edges to prevent out of boundaries cropping
+                hmmFrame,centerCoord = self._fill_frame_edge(hmmFrame,self.clusterData[l],size)
+                subhmmFrame = self._cut_frame(hmmFrame, centerCoord[1],centerCoord[2],size,size)
                 # go to the rgb video timpepoint
-                for t in range(0,hmmFrameblock):
+                for t in range(0,self.obj.frameblock):
                     ret, rgbFrame = rgbVideo.read()
-                    rgbFrame = _mark_rectangle(rgbFrame,clusterCenter[l],l,(0,175,255))
-                    rgbFrame = _mark_center(rgbFrame,hmmZ,clusterCenter[l])
+                    rgbFrame = self._mark_rectangle(rgbFrame,l)
+                    rgbFrame = self._mark_center(rgbFrame,hmmZ,self.clusterData[l])
 
-                    # mirror replicate the edges to prevent out of boundaries
-                    rgbFrame,centerCoord = _fill_frame_edge(rgbFrame,clusterCenter[l],size)
-                    subrgbFrame = _cut_frame(rgbFrame, centerCoord[1],centerCoord[2],size,size)
+                    # mirror replicate the edges to prevent out of boundaries cropping
+                    rgbFrame,centerCoord = self._fill_frame_edge(rgbFrame,self.clusterData[l],size)
+                    subrgbFrame = self._cut_frame(rgbFrame, centerCoord[1], centerCoord[2],size,size)
                     outFrame = np.concatenate((subhmmFrame,subrgbFrame),axis=1)
                     out.write(outFrame)
 
@@ -596,18 +607,19 @@ class VideoProcessor:
 
         return padFrame,ajustCoord
 
-    def _mark_rectangle(self,frame,box,label,markColor):
-        cv2.rectangle(frame,(box[8],box[7]),(box[5],box[4]),markColor,2)
-        changeCount = box[9]
+    def _mark_rectangle(self,frame,currLabel):
+        currClusterCoord = self._int(self.coords[self.labels == currLabel,:])
+        cv2.rectangle(frame,(np.min(currClusterCoord[:,2]),np.min(currClusterCoord[:,1])),(np.max(currClusterCoord[:,2]),np.max(currClusterCoord[:,1])),(0,175,255),2)
+        assert currClusterCoord.shape[0] == self.clusterData[currLabel,3]
+
         # put change count on the box
         font                   = cv2.FONT_HERSHEY_SIMPLEX
-        bottomLeftCornerOfText = (box[8],box[7])
-        fontScale              = 1
-        fontColor              = markColor
+        bottomLeftCornerOfText = (np.min(currClusterCoord[:,2]),np.min(currClusterCoord[:,1]))
+        fontScale              = 8
+        fontColor              = (0,175,255)
         lineType               = 2
 
-        #cv2.putText(frame, str(changeCount), bottomLeftCornerOfText, font, fontScale,fontColor,lineType)
-        cv2.putText(frame, str(label), bottomLeftCornerOfText, font, fontScale,fontColor,lineType)
+        cv2.putText(frame, str(currLabel), bottomLeftCornerOfText, font, fontScale,fontColor,lineType)
 
         return frame
 
@@ -617,7 +629,7 @@ class VideoProcessor:
         return frame     
     
     def _cut_frame(self,frame,centerY,centerX,height,width):
-        return frame[self._int(centerY)-self._int(height/2):self._int(centerY)+self._int(height/2),self._int(centerX)-self._int(width/2):self,_int(centerX)+self._int(width/2),:]
+        return frame[self._int(centerY - height/2):self._int(centerY + height/2),self._int(centerX - width/2):self._int(centerX + width/2),:]
 
     def _create_hmm_frame(self,z,currLabel):
         # only one cluster is colored, others are white

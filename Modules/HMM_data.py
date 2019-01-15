@@ -63,7 +63,7 @@ class HMMdata:
     def retDBScanMatrix(self):
         row = 0
         column = -1
-        allCoords = np.zeros(shape = (int(self.data.shape[0] - self.width*self.height), 4), dtype = 'uint16')
+        allCoords = np.zeros(shape = (int(self.data.shape[0] - self.width*self.height), 4), dtype = 'uint64')
         i = 0
         for d in self.data:
             if d[0] == 0:
@@ -72,7 +72,7 @@ class HMMdata:
                     column = 0
                     row += 1
             else:
-                allCoords[i] = np.array((d[0], row, column, abs(d[2] - prev_mag)), dtype = 'uint16')
+                allCoords[i] = np.array((d[0], row, column, abs(d[2] - prev_mag)), dtype = 'uint64')
                 i+=1
             prev_mag = d[2]
         return allCoords

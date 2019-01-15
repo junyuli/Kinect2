@@ -144,9 +144,11 @@ class DataAnalyzer:
             self.vp_obj.calculateHMM()
             self.vp_obj.createFramesToAnnotate()
             if clusterFlag:
-                self.vp_obj.filterHMM(mask= self.locAnalysisDir+'TankMask.tif', nlargest=1,write=True)
+                self.vp_obj.filterHMM(nlargest=1,write=True)
+                #self.vp_obj.filterHMM(mask = self.locAnalysisDir+'TankMask.tif', nlargest=1,write=True)
                 self.vp_obj.clusterHMM()
                 self.vp_obj.clusterStat(interval=1)
+                self.vp_obj.createClusterClipsToAnnotate(n=10)
             subprocess.call(['rclone', 'copy', self.locAnalysisDir + baseName, self.remote + ':' + self.remAnalysisDir + baseName], stderr = self.fnull)
          #   if os.path.isfile(self.locMasterDir + vo.mp4_file):
          #       os.remove(self.locMasterDir + vo.mp4_file)
