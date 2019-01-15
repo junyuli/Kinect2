@@ -270,7 +270,7 @@ class VideoProcessor:
         # tank is the non-zero(white) part of mask
         # this option needs to be fixed
         if mask:
-            pdb.set_trace()
+            #pdb.set_trace()
             maskImg = np.array(Image.open(mask))
             img = np.zeros([972,1296])
             img[filteredCoords[:,1],filteredCoords[:,2]] = True
