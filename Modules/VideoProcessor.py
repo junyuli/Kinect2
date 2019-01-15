@@ -343,6 +343,8 @@ class VideoProcessor:
                 if os.path.isfile(self.clusterDirectory + 'NearestNeighborTree'):
                     X = pickle.load(open(self.clusterDirectory + 'NearestNeighborTree.pkl', 'rb'))
                 else:
+                    #halfway = self.coords[0:int(self.coords.shape[0]/2),:]
+                    #self.coords = halfway 
                     X = NearestNeighbors(radius=treeR, metric='minkowski', p=2, algorithm='kd_tree',leaf_size=leafNum,n_jobs=24).fit(self.coords)
                     pickle.dump(X, open(self.clusterDirectory + 'NearestNeighborTree.pkl', 'wb'))
                 
