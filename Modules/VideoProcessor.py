@@ -345,10 +345,10 @@ class VideoProcessor:
                 else:
                     #halfway = self.coords[0:int(self.coords.shape[0]/2),:]
                     #self.coords = halfway 
-                    X = NearestNeighbors(radius=treeR, metric='minkowski', p=2, algorithm='kd_tree',leaf_size=leafNum,n_jobs=24).fit(self.coords)
+                    X = NearestNeighbors(radius=treeR, metric='minkowski', p=2, algorithm='kd_tree',leaf_size=leafNum,n_jobs=24).fit(self.coords[:,0:3])
                     pickle.dump(X, open(self.clusterDirectory + 'NearestNeighborTree.pkl', 'wb'))
                 
-                dist = X.radius_neighbors_graph(self.coords, neighborR, 'distance')
+                dist = X.radius_neighbors_graph(self.coords[:,0:3], neighborR, 'distance')
                 print('dist size: '+ str(dist.data.nbytes))
                 scipy.sparse.save_npz(self.clusterDirectory + 'PairwiseDistances.npz', dist, compressed=False)
            
@@ -362,24 +362,24 @@ class VideoProcessor:
 
         self.coords = np.load(self.clusterDirectory + 'FilteredCoords.npy')
         self.labels = np.load(self.clusterDirectory + 'Labels.npy')
-
         # calculate center z, y, x, number points for each cluster
         clusterDataFile = self.clusterDirectory + 'ClusterCenters.npy'
         if os.path.isfile(clusterDataFile):
             self.clusterData = np.load(clusterDataFile)
         else:
             uniqueLabel = set(self.labels[self.labels!=-1])
-            self.clusterData = np.zeros([len(uniqueLabel),7])  # clusterData z,y,x, max z,y,x, min z,y,x
+            self.clusterData = np.zeros([len(uniqueLabel),8])  # clusterData z,y,x, max z,y,x, min z,y,x
             for l in uniqueLabel:
                 currCluster = self.coords[self.labels==l,:]
-                self.clusterData[l,0:3] = np.mean(currCluster[:,0:3],axis=0)  # center coordinate of cluster
-                self.clusterData[l,3] = currCluster.shape[0]  # sand change count
-                self.clusterData[l,4] = np.max(currCluster[:,0]) - np.min(currCluster[:,0])
-                self.clusterData[l,5] = np.max(currCluster[:,1]) - np.min(currCluster[:,1])  # span of y coordinates
-                self.clusterData[l,6] = np.max(currCluster[:,2]) - np.min(currCluster[:,2]) 
+                self.clusterData[l,0] = l
+                self.clusterData[l,1:4] = np.mean(currCluster[:,0:3],axis=0)  # center coordinate of cluster
+                self.clusterData[l,4] = currCluster.shape[0]  # sand change count
+                self.clusterData[l,5] = np.max(currCluster[:,0]) - np.min(currCluster[:,0])
+                self.clusterData[l,6] = np.max(currCluster[:,1]) - np.min(currCluster[:,1])  # span of y coordinates
+                self.clusterData[l,7] = np.max(currCluster[:,2]) - np.min(currCluster[:,2]) 
 
             np.save(clusterDataFile, self.clusterData)
-
+            np.savetxt(os.path.splitext(clusterDataFile)[0]+'.csv', self.clusterData, fmt='%1.2f', header="ClipIndex,CenterTime(sec),CenterY,CenterX,NumberPoint,SpanTime,SpanY,SpanX", delimiter=",")
 
         if os.path.exists(self.clusterDirectory + 'ClusterStat.pdf') and not self.rewrite:
             print('Cluster stats exists.')
@@ -392,7 +392,7 @@ class VideoProcessor:
         except AttributeError:
             self.clusterData = np.load(self.clusterDirectory + 'ClusterCenters.npy')
         # e.g. change at 45 min counted as change in the 0st hr
-        clusterTimeHr = self._int(np.floor(self.clusterData[:,0]/3600))
+        clusterTimeHr = self._int(np.floor(self.clusterData[:,1]/3600))
         # One histogram and a number of progression plots depending on timespan
         numPlot = (np.max(clusterTimeHr) - np.min(clusterTimeHr)) / float(interval) +1
         rowNum = int(np.ceil(numPlot/2))
@@ -428,9 +428,6 @@ class VideoProcessor:
        
         # check if cluster results exist, and construct object from clusterHMM
    
-        #pdb.set_trace()
-        if glob.glob(self.clusterDirectory + 'ClusterClipsToAnnotate/*') and not self.rewrite:
-            print('Clips already exist. Will not redo unless rewrite flag is True')
         if not os.path.exists(self.clusterDirectory + 'Labels.npy') or not os.path.exists(self.clusterDirectory + 'ClusterCenters.npy'):
             print('run clusterHMM first')
 
@@ -438,7 +435,6 @@ class VideoProcessor:
         self.coords = np.load(self.clusterDirectory + 'FilteredCoords.npy')
         self.labels = np.load(self.clusterDirectory + 'Labels.npy')
         self.clusterData = np.load(self.clusterDirectory + 'ClusterCenters.npy')
-
         rgbVideo = cv2.VideoCapture(self.videofile)
         os.makedirs(self.clusterDirectory + 'ClusterClipsToAnnotate/', exist_ok=True)
 
@@ -446,10 +442,16 @@ class VideoProcessor:
             self.obj
         except AttributeError:
             self.obj = HMMdata(filename = self.hmmFile)
+        
+        # taking samples at random timepoints and locations
+        self.clusterData = np.random.shuffle(self.clusterData)
 
-        for l in range(0,n):
-            z = self.clusterData[l,0]
-            out = cv2.VideoWriter(self.clusterDirectory + 'ClusterClipsToAnnotate/' + str(l) + '.mp4', 0x00000021, 25, (size*2,size))
+        for clipIndex in range(0,n):
+            if os.path.isfile(self.clusterDirectory + 'ClusterClipsToAnnotate/' + str(clipIndex) + '.mp4'):
+                continue
+            l = self.clusterData[clipIndex,0]
+            z = self.clusterData[clipIndex,1]
+            out = cv2.VideoWriter(self.clusterDirectory + 'ClusterClipsToAnnotate/' + str(clipIndex) + '.mp4', 0x00000021, 25, (size*2,size))
 
             hmmStartZ = self._int(z - length/2)
             hmmEndZ = self._int(z + length/2)
@@ -459,20 +461,20 @@ class VideoProcessor:
                 hmmFrame = self._create_hmm_frame(hmmZ,l)
                 hmmFrame = self._mark_rectangle(hmmFrame,l)
                 # make a marker when time is the center time of cluster
-                hmmFrame = self._mark_center(hmmFrame,hmmZ,self.clusterData[l])
+                hmmFrame = self._mark_center(hmmFrame,hmmZ,self.clusterData[clipIndex])
 
                 # mirror replicate the edges to prevent out of boundaries cropping
-                hmmFrame,centerCoord = self._fill_frame_edge(hmmFrame,self.clusterData[l],size)
-                subhmmFrame = self._cut_frame(hmmFrame, centerCoord[1],centerCoord[2],size,size)
+                hmmFrame,centerCoord = self._fill_frame_edge(hmmFrame,self.clusterData[clipIndex],size)
+                subhmmFrame = self._cut_frame(hmmFrame, centerCoord[2],centerCoord[3],size,size)
                 # go to the rgb video timpepoint
                 for t in range(0,self.obj.frameblock):
                     ret, rgbFrame = rgbVideo.read()
                     rgbFrame = self._mark_rectangle(rgbFrame,l)
-                    rgbFrame = self._mark_center(rgbFrame,hmmZ,self.clusterData[l])
+                    rgbFrame = self._mark_center(rgbFrame,hmmZ,self.clusterData[clipIndex])
 
                     # mirror replicate the edges to prevent out of boundaries cropping
-                    rgbFrame,centerCoord = self._fill_frame_edge(rgbFrame,self.clusterData[l],size)
-                    subrgbFrame = self._cut_frame(rgbFrame, centerCoord[1], centerCoord[2],size,size)
+                    rgbFrame,centerCoord = self._fill_frame_edge(rgbFrame,self.clusterData[clipIndex],size)
+                    subrgbFrame = self._cut_frame(rgbFrame, centerCoord[2], centerCoord[3],size,size)
                     outFrame = np.concatenate((subhmmFrame,subrgbFrame),axis=1)
                     out.write(outFrame)
 
@@ -604,20 +606,20 @@ class VideoProcessor:
     def _fill_frame_edge(self,frame,coord,padSize):
         padFrame = np.stack([np.pad(frame[:,:,c], (padSize,), mode='constant',constant_values= 0) for c in range(3)], axis=2)
         # adjust coord after edge padding 
-        ajustCoord = coord.copy()
-        ajustCoord[1:3] = coord[1:3] + padSize
+        adjustCoord = coord.copy()
+        adjustCoord[2:4] = coord[2:4] + padSize
 
-        return padFrame,ajustCoord
+        return padFrame,adjustCoord
 
     def _mark_rectangle(self,frame,currLabel):
         currClusterCoord = self._int(self.coords[self.labels == currLabel,:])
         cv2.rectangle(frame,(np.min(currClusterCoord[:,2]),np.min(currClusterCoord[:,1])),(np.max(currClusterCoord[:,2]),np.max(currClusterCoord[:,1])),(0,175,255),2)
-        assert currClusterCoord.shape[0] == self.clusterData[currLabel,3]
+        assert currClusterCoord.shape[0] == self.clusterData[currLabel,4]
 
         # put change count on the box
         font                   = cv2.FONT_HERSHEY_SIMPLEX
-        bottomLeftCornerOfText = (np.min(currClusterCoord[:,2]),np.min(currClusterCoord[:,1]))
-        fontScale              = 8
+        bottomLeftCornerOfText = (np.min(currClusterCoord[:,2]),np.min(currClusterCoord[:,1]-5))
+        fontScale              = 0.8
         fontColor              = (0,175,255)
         lineType               = 2
 
